@@ -9,6 +9,8 @@
 
 **pg-upsert** is a Python package for validating and upserting data from staging tables into base tables in PostgreSQL. It runs automated QA checks, reports errors with rich formatted output, and performs dependency-aware upserts.
 
+An **upsert** (a blend of *update* and *insert*, standardized in SQL as [`MERGE`](<https://en.wikipedia.org/wiki/Merge_(SQL)>)) updates a row if it already exists and inserts it if it does not. pg-upsert matches staging rows to base rows by primary key — matched rows update the base table, unmatched rows are inserted — all inside a single transaction that is rolled back unless you ask to commit.
+
 ![pg-upsert terminal output with interactive compare table](pg-upsert-screenshot.png)
 
 ## Why Use `pg-upsert`?
@@ -19,8 +21,26 @@
 - **Exportable Fix Sheets** – `--export-failures <dir>` writes an actionable report of failing rows: one row per unique violating staging row with an `_issues` column listing every problem (NULL in 'genre', duplicate PK, FK violation, etc.) so users can open it in Excel and fix the data. Supports CSV (file per table), JSON (nested), and XLSX (sheets per table) via `--export-format`.
 - **Schema Validation** – `--check-schema` flag validates column existence and type compatibility without running data checks or upserts.
 - **Flexible Upsert Strategies** – Supports `upsert`, `update`, and `insert` methods.
+- **YAML Configuration** – One config file drives both the CLI (`--config-file`) and the Python API (`PgUpsert.from_config()`), with layered sources and per-table column excludes.
 - **Dependency-Aware Ordering** – Tables are processed in FK dependency order automatically.
 - **Rich Output** – Colored pass/fail indicators, formatted tables, and dual console+logfile output.
+
+## Installation
+
+Requires Python 3.10+ and a PostgreSQL database.
+
+```sh
+pip install pg-upsert
+```
+
+Optional extras:
+
+```sh
+pip install "pg-upsert[tui]"   # Textual terminal UI for interactive mode
+pip install "pg-upsert[xlsx]"  # XLSX fix-sheet export
+```
+
+A prebuilt Docker image is also available — see [Docker](#docker).
 
 ## Usage
 
@@ -38,6 +58,8 @@ result = PgUpsert(
     upsert_method="upsert",
     exclude_cols=("rev_user", "rev_time"),
     exclude_null_check_cols=("book_alias",),
+    exclude_cols_by_table={"books": ("isbn_legacy",)},
+    exclude_null_check_cols_by_table={"books": ("reprint_date",)},
 ).run()
 
 # UpsertResult provides structured access to results
@@ -46,6 +68,19 @@ print(result.committed)       # True if changes were committed
 print(result.total_updated)   # Total rows updated across all tables
 print(result.total_inserted)  # Total rows inserted across all tables
 print(result.to_json())       # JSON serialization for CI/CD
+```
+
+`exclude_cols` and `exclude_null_check_cols` apply to every table. The `*_by_table` mappings add per-table excludes merged on top of the global lists; each key must be one of the configured tables.
+
+From a configuration file (the same YAML file the CLI accepts with `--config-file`):
+
+```python
+from pg_upsert import PgUpsert
+
+result = PgUpsert.from_config("pg-upsert.yaml").run()
+
+# Keyword overrides beat file values, and multiple files layer left-to-right
+result = PgUpsert.from_config(["base.yaml", "task.yaml"], do_commit=True).run()
 ```
 
 Using an existing connection:
@@ -202,6 +237,12 @@ exclude_columns:
   - "rev_user"
 null_columns:
   - "book_alias"
+exclude_columns_by_table:  # Per-table excludes, merged on top of exclude_columns
+  books:
+    - "isbn_legacy"
+null_columns_by_table:  # Per-table NOT NULL check skips, merged on top of null_columns
+  books:
+    - "reprint_date"
 output: "text"  # Options: "text", "json"
 check_schema: false
 compact: false
@@ -212,7 +253,7 @@ export_max_rows: 1000  # Max rows captured per check per table for the fix sheet
 strict_columns: false  # Treat all missing staging columns as errors
 ```
 
-Run with: `pg-upsert -f config.yaml`
+Run with: `pg-upsert -f config.yaml`, or load the same file in Python with `PgUpsert.from_config("config.yaml")`.
 
 ### Docker
 
@@ -243,10 +284,10 @@ pg-upsert runs 7 types of QA checks on staging data before upserting:
 > base table has no constraints of that type, and **tables without a
 > primary key are skipped during the upsert step** (a warning is
 > printed). To upsert against a table, make sure the base table has a
-> PK. See [Running Without Constraints](https://pg-upsert.readthedocs.io/qa_checks/#running-without-constraints)
+> PK. See [Running Without Constraints](https://pg-upsert.readthedocs.io/en/latest/qa_checks/#running-without-constraints)
 > for details.
 
-See the [QA Checks Reference](https://pg-upsert.readthedocs.io/) for detailed documentation.
+See the [QA Checks Reference](https://pg-upsert.readthedocs.io/en/latest/qa_checks/) for detailed documentation.
 
 ## Authentication
 
